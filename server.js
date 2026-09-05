@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import connectDB from "./config/db.js";
 import decisionRoutes from "./routes/decisionRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
 
 const app = express();
 
@@ -16,10 +17,16 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api/decisions", decisionRoutes);
+app.use("/api/auth", authRoutes);
 
 // Start serwera
 const startServer = async () => {
   try {
+    if (!process.env.JWT_SECRET) {
+      console.error("Brak JWT_SECRET w pliku .env");
+      process.exit(1);
+    }
+
     await connectDB();
 
     const PORT = process.env.PORT || 5000;

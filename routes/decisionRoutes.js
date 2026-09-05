@@ -4,11 +4,12 @@ import {
   getDecisions,
   getDecisionById,
 } from "../controllers/decisionController.js";
+import { auth } from "../middleware/auth.js";
 
 const router = Router();
 
-router.post("/", createDecision);
-router.get("/", getDecisions);
-router.get("/:id", getDecisionById);
+router.post("/", auth, createDecision);
+router.get("/", auth, getDecisions);
+router.get("/:id", auth, getDecisionById);
 
 export default router;
