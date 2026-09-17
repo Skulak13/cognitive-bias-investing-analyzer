@@ -1,18 +1,5 @@
 import mongoose from "mongoose";
-
-// Wartości z motivationOptions.js – trzymaj synchronizację
-const STATED_MOTIVATIONS = [
-  "spodziewam się wzrostu ceny",
-  "spodziewam się spadku ceny / chcę ograniczyć stratę",
-  "chcę zrealizować dotychczasowy zysk",
-  "boję się zrealizować zysk lub stratę (unikam decyzji)",
-  "nowe informacje o spółce zmieniły moją ocenę",
-  "podążam za tym, co robią inni inwestorzy",
-  "chcę zmniejszyć ryzyko ekspozycji",
-  "świadomie nic nie zmieniam na razie (teza wciąż aktualna)",
-  "zapomniałem / nie śledziłem aktywnie",
-  "inny powód",
-];
+import { STATED_MOTIVATIONS } from "../utils/motivationOptions.js";
 
 const earlyAiCheckSchema = new mongoose.Schema(
   {
@@ -34,12 +21,21 @@ const actionSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     actionType: {
       type: String,
       enum: ["open", "add", "reduce", "hold", "close"],
       required: true,
     },
-    // Walidacja ilości odbywa się w kontrolerze (atomowo)
+    // Sam typ liczbowy waliduje schemat. Inwariant WZGLĘDEM currentQuantity
+    // pozycji nadrzędnej (np. reduce < currentQuantity) jest egzekwowany
+    // atomowo w kontrolerze przez utils/actionInvariants.js — schemat
+    // pojedynczego dokumentu Action nie zna stanu Position.
     quantity: {
       type: Number,
       required: true,
@@ -48,7 +44,8 @@ const actionSchema = new mongoose.Schema(
     // Cena transakcji podana przez użytkownika – źródło prawdy
     executionPrice: {
       type: Number,
-      // required tylko poza hold – sprawdzamy w kontrolerze
+      // required tylko poza "hold" — zależy od actionType, więc sprawdzane
+      // w kontrolerze (validateStaticQuantity nie odpowiada za to pole)
       min: 0,
     },
     // Cena rynkowa pobrana automatycznie w momencie zapisu (informacyjna)
@@ -95,9 +92,11 @@ const actionSchema = new mongoose.Schema(
   },
 );
 
-// Indeks do szybkiego pobierania historii pozycji
+// Historia akcji danej pozycji w porządku chronologicznym
 actionSchema.index({ positionId: 1, actionDate: 1 });
 actionSchema.index({ positionId: 1, createdAt: 1 });
+// Parent-Child Guard (Etap 6): {_id, positionId, userId} jednym zapytaniem
+actionSchema.index({ positionId: 1, userId: 1 });
 
 const Action = mongoose.model("Action", actionSchema);
 

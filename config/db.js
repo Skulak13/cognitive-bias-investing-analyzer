@@ -1,13 +1,8 @@
 import mongoose from "mongoose";
 
 const connectDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log("Połączono z MongoDB Atlas ✔");
-  } catch (error) {
-    console.error("Błąd połączenia z MongoDB ❌", error);
-    process.exit(1);
-  }
+  await mongoose.connect(process.env.MONGODB_URI);
+  console.log("Połączono z MongoDB Atlas ✔");
 };
 
 mongoose.connection.on("error", (err) => {
@@ -18,7 +13,7 @@ mongoose.connection.on("disconnected", () => {
   console.warn("Utracono połączenie z MongoDB ⚠️");
 });
 
-mongoose.connection.on("connected", () => {
+mongoose.connection.on("reconnected", () => {
   console.log("Ponownie połączono z MongoDB 🔄");
 });
 
