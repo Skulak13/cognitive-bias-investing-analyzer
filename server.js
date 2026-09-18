@@ -5,6 +5,7 @@ import connectDB from "./config/db.js";
 import { notFound, errorHandler } from "./middleware/errorHandler.js";
 import authRoutes from "./routes/authRoutes.js";
 import positionsRoutes from "./routes/positions.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/positions", positionsRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Obsługa błędów
 // notFound i errorHandler MUSZĄ być zarejestrowane na końcu,

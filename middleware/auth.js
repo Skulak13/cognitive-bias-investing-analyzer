@@ -1,5 +1,11 @@
 import jwt from "jsonwebtoken";
 
+/**
+ * Dekoduje token z nagłówka Authorization: Bearer <token>.
+ * Ustawia req.userId (filtr w KAŻDYM zapytaniu do bazy — sekcja 8.1)
+ * i req.email (żeby middleware/adminOnly.js nie musiał dociągać usera
+ * z bazy tylko po to, by sprawdzić jeden adres).
+ */
 export const auth = (req, res, next) => {
   const header = req.headers.authorization;
 
@@ -13,7 +19,7 @@ export const auth = (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     req.userId = decoded.userId;
-    req.username = decoded.username;
+    req.email = decoded.email;
 
     next();
   } catch (error) {
