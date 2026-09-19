@@ -181,11 +181,13 @@ Aggregations across all of a user's decisions:
 1. Backend skeleton
 2. Position/Action data model and transactional writes
 3. Authentication
-4. Market price integration (current + historical)
-5. AI analysis integration (quick-check + full analysis)
-6. Statistics module
-7. Simple frontend
-8. Deployment (Render + MongoDB Atlas)
+4. Market Data Layer
+5. Trading Calendar Logic
+6. Ownership & Data Integrity Guards
+7. AI Safety Layer
+8. Cognitive Bias Analysis Engine
+9. Statistics & Insights
+10. Frontend & Deployment
 
 ---
 

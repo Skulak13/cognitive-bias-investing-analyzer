@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Position from "../models/Position.js";
 import Action from "../models/Action.js";
+import { getCurrentPrice } from "../services/currentPriceService.js";
 import { toTradingDateRef } from "../utils/tradingCalendar.js";
 import {
   validateStaticQuantity,
@@ -17,12 +18,41 @@ function fail(status, message) {
 }
 
 /**
+ * Pobiera bieżącą cenę rynkową w sposób bezpieczny.
+ *
+ * marketPriceAtDecision jest informacją pomocniczą.
+ * Jej brak nie powinien anulować prawidłowej operacji
+ * domenowej, np. zapisania open/add.
+ *
+ * executionPrice pozostaje źródłem prawdy
+ * o wykonaniu transakcji.
+ */
+async function getMarketPriceSafely(ticker) {
+  try {
+    return await getCurrentPrice(ticker);
+  } catch (error) {
+    console.warn(
+      `Nie udało się pobrać marketPriceAtDecision dla ${ticker}: ${error.message}`,
+    );
+
+    return undefined;
+  }
+}
+
+/**
  * POST /api/positions
- * Otwiera nową pozycję + zapisuje pierwszą akcję "open" — w jednej
- * transakcji ACID. To NIE jest przypadek objęty przez buildActionUpdate:
- * tworzymy nowy dokument Position, więc nie ma istniejącego stanu,
- * o który można by się wyścigowo pobić — zwykły Position.create()
- * wewnątrz sesji transakcyjnej wystarczy.
+ *
+ * Otwiera nową pozycję + zapisuje pierwszą akcję "open"
+ * w jednej transakcji ACID.
+ *
+ * executionPrice:
+ *   - pochodzi od użytkownika,
+ *   - jest źródłem prawdy o wykonaniu transakcji.
+ *
+ * marketPriceAtDecision:
+ *   - jest pobierane przez backend z Finnhub/cache,
+ *   - NIE jest przyjmowane z req.body,
+ *   - ma charakter informacyjnego snapshotu.
  *
  * (Etap 2: brak ensureAiAccessible, brak wywołań AI — to Etap 8.)
  */
@@ -31,7 +61,6 @@ export const createPosition = async (req, res) => {
     ticker,
     quantity,
     executionPrice,
-    marketPriceAtDecision,
     actionDate,
     statedMotivation,
     reasoning,
@@ -63,9 +92,19 @@ export const createPosition = async (req, res) => {
 
   // 4. Inwariant ilości
   const quantityError = validateStaticQuantity("open", quantity);
-  if (quantityError) throw fail(400, quantityError);
+
+  if (quantityError) {
+    throw fail(400, quantityError);
+  }
+
+  // 5. Pobranie pomocniczej ceny rynkowej.
+  //
+  // Awaria Finnhub/cache nie blokuje utworzenia pozycji.
+  // executionPrice pozostaje źródłem prawdy.
+  const marketPriceAtDecision = await getMarketPriceSafely(ticker);
 
   const session = await mongoose.startSession();
+
   let position;
   let action;
 
@@ -105,8 +144,8 @@ export const createPosition = async (req, res) => {
       );
     });
   } finally {
-    // endSession ZAWSZE, niezależnie od tego, czy transakcja się powiodła —
-    // inaczej zostawiamy otwartą sesję przy każdym błędzie.
+    // endSession ZAWSZE, niezależnie od tego,
+    // czy transakcja się powiodła.
     await session.endSession();
   }
 
@@ -115,21 +154,35 @@ export const createPosition = async (req, res) => {
 
 /**
  * POST /api/positions/:id/actions
+ *
  * Dodaje akcję add/reduce/hold/close do ISTNIEJĄCEJ pozycji.
- * Właściwy wzorzec z sekcji 7.2: atomowa aktualizacja Position.currentQuantity
- * (inwariant wbudowany w filtr — patrz buildActionUpdate) + zapis Action
- * w tej samej sesji. Jeśli findOneAndUpdate nie znajdzie dopasowania (bo
- * quantity łamie inwariant, pozycja nie istnieje/nie należy do usera/jest
- * zamknięta/usunięta), rzucamy błąd WEWNĄTRZ withTransaction — Mongo
- * automatycznie wycofuje wszystko, co się zdążyło zapisać w tej sesji.
+ *
+ * marketPriceAtDecision jest pobierane przez backend
+ * na podstawie tickera pozycji.
+ *
+ * Właściwy wzorzec z sekcji 7.2:
+ * atomowa aktualizacja Position.currentQuantity
+ * (inwariant wbudowany w filtr — patrz buildActionUpdate)
+ * + zapis Action w tej samej sesji.
+ *
+ * Jeśli findOneAndUpdate nie znajdzie dopasowania:
+ * - quantity łamie inwariant,
+ * - pozycja nie istnieje,
+ * - pozycja nie należy do usera,
+ * - pozycja jest zamknięta,
+ * - pozycja jest usunięta,
+ *
+ * rzucamy błąd WEWNĄTRZ withTransaction.
+ * Mongo automatycznie wycofuje wszystko,
+ * co zdążyło się zapisać w tej sesji.
  */
 export const addAction = async (req, res) => {
   const { id: positionId } = req.params;
+
   const {
     actionType,
     quantity,
     executionPrice,
-    marketPriceAtDecision,
     actionDate,
     statedMotivation,
     reasoning,
@@ -145,7 +198,10 @@ export const addAction = async (req, res) => {
   }
 
   const quantityError = validateStaticQuantity(actionType, quantity);
-  if (quantityError) throw fail(400, quantityError);
+
+  if (quantityError) {
+    throw fail(400, quantityError);
+  }
 
   if (actionType !== "hold" && executionPrice === undefined) {
     throw fail(
@@ -166,6 +222,32 @@ export const addAction = async (req, res) => {
     throw fail(400, "Nieprawidłowy format actionDate");
   }
 
+  /**
+   * Najpierw pobieramy tylko dane potrzebne do znalezienia
+   * tickera pozycji.
+   *
+   * Robimy to PRZED rozpoczęciem transakcji MongoDB, żeby
+   * transakcja nie musiała czekać na zewnętrzne API.
+   */
+  const positionMeta = await Position.findOne({
+    _id: positionId,
+    userId: req.userId,
+    deletedAt: null,
+  })
+    .select("ticker status")
+    .lean();
+
+  if (!positionMeta || positionMeta.status !== "open") {
+    throw fail(409, "Naruszenie inwariantu ilości lub pozycja niedostępna");
+  }
+
+  /**
+   * Pobieramy bieżącą cenę przez cacheService/Finnhub.
+   *
+   * Awaria Finnhub nie blokuje zapisania Action.
+   */
+  const marketPriceAtDecision = await getMarketPriceSafely(positionMeta.ticker);
+
   const { filter, update } = buildActionUpdate(
     actionType,
     quantity,
@@ -174,21 +256,23 @@ export const addAction = async (req, res) => {
   );
 
   const session = await mongoose.startSession();
+
   let position;
   let action;
 
   try {
     await session.withTransaction(async () => {
       position = await Position.findOneAndUpdate(filter, update, {
-        new: true,
+        returnDocument: "after",
         session,
       });
 
       if (!position) {
-        // Brak dopasowania = naruszenie inwariantu ilości ALBO pozycja
-        // niedostępna (nie istnieje / nie należy do usera / zamknięta /
-        // usunięta). Rzucenie tutaj wymusza rollback całej transakcji —
-        // Action poniżej nigdy się nie zapisze.
+        // Brak dopasowania = naruszenie inwariantu ilości
+        // ALBO pozycja niedostępna.
+        //
+        // Rzucenie tutaj wymusza rollback całej transakcji.
+        // Action poniżej nie zostanie zapisany.
         throw fail(409, "Naruszenie inwariantu ilości lub pozycja niedostępna");
       }
 
@@ -196,7 +280,7 @@ export const addAction = async (req, res) => {
         [
           {
             positionId,
-            userId: req.userId, // denormalizacja z Position — 4.2, 8.5
+            userId: req.userId,
             actionType,
             quantity,
             executionPrice,
@@ -221,6 +305,7 @@ export const addAction = async (req, res) => {
 
 /**
  * GET /api/positions
+ *
  * Lista własnych, nieusuniętych pozycji.
  */
 export const getPositions = async (req, res) => {
@@ -234,8 +319,9 @@ export const getPositions = async (req, res) => {
 
 /**
  * GET /api/positions/:id
- * 404, nie 403, jeśli pozycja należy do innego usera — nie zdradzamy
- * czy w ogóle istnieje (sekcja 5 planu).
+ *
+ * 404, nie 403, jeśli pozycja należy do innego usera —
+ * nie zdradzamy czy w ogóle istnieje.
  */
 export const getPositionById = async (req, res) => {
   const position = await Position.findOne({
@@ -244,23 +330,39 @@ export const getPositionById = async (req, res) => {
     deletedAt: null,
   });
 
-  if (!position) throw fail(404, "Nie znaleziono pozycji");
+  if (!position) {
+    throw fail(404, "Nie znaleziono pozycji");
+  }
 
   res.json(position);
 };
 
 /**
  * DELETE /api/positions/:id
- * Soft-delete — ustawia deletedAt, nigdy nie usuwa dokumentu fizycznie.
+ *
+ * Soft-delete — ustawia deletedAt,
+ * nigdy nie usuwa dokumentu fizycznie.
  */
 export const softDeletePosition = async (req, res) => {
   const position = await Position.findOneAndUpdate(
-    { _id: req.params.id, userId: req.userId, deletedAt: null },
-    { $set: { deletedAt: new Date() } },
-    { new: true },
+    {
+      _id: req.params.id,
+      userId: req.userId,
+      deletedAt: null,
+    },
+    {
+      $set: {
+        deletedAt: new Date(),
+      },
+    },
+    {
+      returnDocument: "after",
+    },
   );
 
-  if (!position) throw fail(404, "Nie znaleziono pozycji");
+  if (!position) {
+    throw fail(404, "Nie znaleziono pozycji");
+  }
 
   res.status(204).send();
 };

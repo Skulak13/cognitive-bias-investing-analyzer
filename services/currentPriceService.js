@@ -1,27 +1,66 @@
-const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+import { getOrSet, keys } from "./cacheService.js";
+
+const QUOTE_TIMEOUT_MS = 5000;
+const NEWS_TIMEOUT_MS = 8000;
 
 /**
- * Bieżąca cena (Finnhub /quote)
- * @returns {Promise<number>} current price
+ * Pobiera klucz API dopiero w momencie wykonywania
+ * rzeczywistego requestu do Finnhub.
+ *
+ * Dzięki temu moduł nie zależy od kolejności importów
+ * i wcześniejszego wykonania dotenv.
  */
-export const getCurrentPrice = async (ticker) => {
-  if (!FINNHUB_API_KEY) {
+function getFinnhubApiKey() {
+  const apiKey = process.env.FINNHUB_API_KEY?.trim();
+
+  if (!apiKey) {
     throw new Error("Brak FINNHUB_API_KEY w pliku .env");
   }
 
+  return apiKey;
+}
+
+/**
+ * Normalizuje ticker.
+ *
+ * @param {string} ticker
+ * @returns {string}
+ */
+function normalizeTicker(ticker) {
   if (typeof ticker !== "string" || !ticker.trim()) {
     throw new Error("Ticker jest wymagany");
   }
 
-  const symbol = ticker.trim().toUpperCase();
+  return ticker.trim().toUpperCase();
+}
 
+/**
+ * Sprawdza format daty YYYY-MM-DD.
+ *
+ * @param {string} value
+ * @param {string} fieldName
+ */
+function validateDateOnly(value, fieldName) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${fieldName} musi mieć format YYYY-MM-DD`);
+  }
+}
+
+/**
+ * Pobiera bieżącą cenę bezpośrednio z Finnhub.
+ *
+ * Ta funkcja NIE zajmuje się cache.
+ * Za cache odpowiada cacheService.getOrSet().
+ */
+async function fetchCurrentPriceFromFinnhub(symbol) {
   const url = new URL("https://finnhub.io/api/v1/quote");
+
   url.searchParams.set("symbol", symbol);
-  url.searchParams.set("token", FINNHUB_API_KEY);
+  url.searchParams.set("token", getFinnhubApiKey());
 
   try {
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(QUOTE_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -32,47 +71,39 @@ export const getCurrentPrice = async (ticker) => {
 
     const data = await response.json();
 
-    if (data.c === 0 || data.c === null || data.c === undefined) {
+    const price = Number(data?.c);
+
+    if (!Number.isFinite(price) || price <= 0) {
       throw new Error(`Nie udało się pobrać ceny dla tickera: ${symbol}`);
     }
 
-    return data.c;
+    return price;
   } catch (error) {
     if (error.name === "TimeoutError" || error.name === "AbortError") {
       throw new Error("Przekroczono czas oczekiwania na odpowiedź z Finnhub");
     }
-    console.error("Błąd w getCurrentPrice:", error.message);
+
     throw error;
   }
-};
+}
 
 /**
- * Newsy spółki (Finnhub /company-news)
- * @param {string} ticker
- * @param {string} from - YYYY-MM-DD
- * @param {string} to   - YYYY-MM-DD
- * @returns {Promise<Array>}
+ * Pobiera newsy bezpośrednio z Finnhub.
+ *
+ * Ta funkcja NIE zajmuje się cache.
+ * Za cache odpowiada cacheService.getOrSet().
  */
-export const getCompanyNews = async (ticker, from, to) => {
-  if (!FINNHUB_API_KEY) {
-    throw new Error("Brak FINNHUB_API_KEY w pliku .env");
-  }
-
-  if (typeof ticker !== "string" || !ticker.trim()) {
-    throw new Error("Ticker jest wymagany");
-  }
-
-  const symbol = ticker.trim().toUpperCase();
-
+async function fetchCompanyNewsFromFinnhub(symbol, from, to) {
   const url = new URL("https://finnhub.io/api/v1/company-news");
+
   url.searchParams.set("symbol", symbol);
   url.searchParams.set("from", from);
   url.searchParams.set("to", to);
-  url.searchParams.set("token", FINNHUB_API_KEY);
+  url.searchParams.set("token", getFinnhubApiKey());
 
   try {
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(NEWS_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -83,14 +114,16 @@ export const getCompanyNews = async (ticker, from, to) => {
 
     const data = await response.json();
 
-    // Finnhub zwraca tablicę; przy błędzie czasem obiekt z error
     if (!Array.isArray(data)) {
       throw new Error(`Nie udało się pobrać newsów dla tickera: ${symbol}`);
     }
 
-    // Normalizacja – bierzemy tylko najważniejsze pola
+    /*
+     * Normalizacja:
+     * przechowujemy tylko pola potrzebne aplikacji.
+     */
     return data.map((item) => ({
-      datetime: item.datetime, // unix timestamp
+      datetime: item.datetime,
       headline: item.headline,
       summary: item.summary,
       source: item.source,
@@ -100,7 +133,89 @@ export const getCompanyNews = async (ticker, from, to) => {
     if (error.name === "TimeoutError" || error.name === "AbortError") {
       throw new Error("Przekroczono czas oczekiwania na newsy z Finnhub");
     }
-    console.error("Błąd w getCompanyNews:", error.message);
+
     throw error;
   }
+}
+
+/**
+ * Bieżąca cena Finnhub /quote.
+ *
+ * Przepływ:
+ *
+ * getCurrentPrice()
+ *      ↓
+ * cacheService.getOrSet()
+ *      ↓
+ * cache hit → zwróć cache
+ *      ↓
+ * cache miss → Finnhub → zapisz cache
+ *
+ * @param {string} ticker
+ * @returns {Promise<number>}
+ */
+export const getCurrentPrice = async (ticker) => {
+  const symbol = normalizeTicker(ticker);
+
+  const result = await getOrSet({
+    key: keys.quote(symbol),
+    type: "quote",
+    source: "finnhub",
+    fetcher: () => fetchCurrentPriceFromFinnhub(symbol),
+  });
+
+  return result.data;
+};
+
+/**
+ * Bieżąca cena razem z metadanymi cache.
+ *
+ * Przyda się później przy tworzeniu
+ * marketContextSnapshot.
+ *
+ * @param {string} ticker
+ * @returns {Promise<object>}
+ */
+export const getCurrentPriceSnapshot = async (ticker) => {
+  const symbol = normalizeTicker(ticker);
+
+  return getOrSet({
+    key: keys.quote(symbol),
+    type: "quote",
+    source: "finnhub",
+    fetcher: () => fetchCurrentPriceFromFinnhub(symbol),
+  });
+};
+
+/**
+ * Newsy spółki.
+ *
+ * Klucz cache zależy od:
+ * ticker + from + to
+ *
+ * Dzięki temu różne zakresy dat nie nadpisują się nawzajem.
+ *
+ * @param {string} ticker
+ * @param {string} from - YYYY-MM-DD
+ * @param {string} to - YYYY-MM-DD
+ * @returns {Promise<Array>}
+ */
+export const getCompanyNews = async (ticker, from, to) => {
+  const symbol = normalizeTicker(ticker);
+
+  validateDateOnly(from, "from");
+  validateDateOnly(to, "to");
+
+  if (from > to) {
+    throw new Error("from nie może być późniejsze niż to");
+  }
+
+  const result = await getOrSet({
+    key: keys.news(symbol, from, to),
+    type: "news",
+    source: "finnhub",
+    fetcher: () => fetchCompanyNewsFromFinnhub(symbol, from, to),
+  });
+
+  return result.data;
 };
