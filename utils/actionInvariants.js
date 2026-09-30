@@ -22,8 +22,12 @@
  * @returns {string|null} komunikat błędu, albo null jeśli quantity jest poprawne
  */
 export function validateStaticQuantity(actionType, quantity) {
-  if (typeof quantity !== "number" || Number.isNaN(quantity)) {
-    return "quantity musi być liczbą";
+  if (typeof quantity !== "number" || !Number.isFinite(quantity)) {
+    // Number.isFinite (nie Number.isNaN!) — samo sprawdzenie NaN
+    // przepuszczało Infinity/-Infinity: typeof Infinity === "number" i
+    // Number.isNaN(Infinity) === false, więc "Infinity" jako quantity
+    // przechodziło dalej i dla open/add spełniało nawet "> 0".
+    return "quantity musi być skończoną liczbą";
   }
 
   switch (actionType) {
@@ -66,8 +70,15 @@ export function validateStaticQuantity(actionType, quantity) {
  * @param {number} quantity
  * @param {import("mongoose").Types.ObjectId|string} userId
  * @param {import("mongoose").Types.ObjectId|string} positionId
+ * @param {Date} [actionDate] wymagane dla "close" — patrz niżej
  */
-export function buildActionUpdate(actionType, quantity, userId, positionId) {
+export function buildActionUpdate(
+  actionType,
+  quantity,
+  userId,
+  positionId,
+  actionDate,
+) {
   const baseFilter = {
     _id: positionId,
     userId,
@@ -90,15 +101,40 @@ export function buildActionUpdate(actionType, quantity, userId, positionId) {
         update: { $inc: { currentQuantity: -quantity } },
       };
 
-    case "close":
-      // "quantity === currentQuantity" dokładnie — nigdy "<=".
+    case "close": {
+      // Filtr: "quantity === currentQuantity" dokładnie — nigdy "<=" (to
+      // odróżnia close od reduce, patrz komentarz przy "reduce" wyżej).
+      //
+      // closedAt = actionDate (moment DECYZJI o zamknięciu), NIE new Date()
+      // (moment ZAPISU rekordu). Bez tego openedAt (ustawiane z actionDate
+      // w positionsController#createPosition) i closedAt opisywałyby dwa
+      // różne rodzaje momentu — jeden domenowy, drugi techniczny — mimo że
+      // wyglądają jak symetryczna para "początek/koniec cyklu życia
+      // pozycji". Przykład, gdzie to miało znaczenie: użytkownik zamyka
+      // pozycję o 15:00, ale wpisuje to do dziennika dopiero następnego
+      // dnia rano — closedAt powinien pokazywać 15:00 (kiedy DECYZJA
+      // zapadła), nie moment porannego wpisu.
+      //
+      // Rzucamy, jeśli brak poprawnego actionDate, zamiast po cichu
+      // wracać do new Date() — cichy fallback przywróciłby dokładnie tę
+      // niespójność, którą ta zmiana ma usunąć, i to w sposób trudny do
+      // zauważenia (kod by "działał", tylko czasem zapisywał zły moment).
+      if (!(actionDate instanceof Date) || Number.isNaN(actionDate.getTime())) {
+        throw new Error(
+          'buildActionUpdate: actionType "close" wymaga poprawnego actionDate ' +
+            "(Date) — closedAt ma odzwierciedlać faktyczny moment decyzji o " +
+            "zamknięciu, ten sam co Action.actionDate, a nie moment zapisu.",
+        );
+      }
+
       return {
         filter: { ...baseFilter, currentQuantity: quantity },
         update: {
           $inc: { currentQuantity: -quantity },
-          $set: { status: "closed", closedAt: new Date() },
+          $set: { status: "closed", closedAt: actionDate },
         },
       };
+    }
 
     case "hold":
       // Nie rusza currentQuantity — ale nadal musi przejść przez ten sam

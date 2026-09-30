@@ -48,7 +48,10 @@ const actionSchema = new mongoose.Schema(
       // w kontrolerze (validateStaticQuantity nie odpowiada za to pole)
       min: 0,
     },
-    // Cena rynkowa pobrana automatycznie w momencie zapisu (informacyjna)
+    // Cena rynkowa NAJBLIŻSZA momentowi decyzji (informacyjna) — close
+    // ostatniej zamkniętej świecy 1-min sprzed actionDate (albo, poza
+    // godzinami sesji, ostatnie zamknięcie dzienne). Nigdy dane "z
+    // przyszłości" względem actionDate. Patrz services/intradayPriceService.js.
     marketPriceAtDecision: {
       type: Number,
       min: 0,

@@ -7,6 +7,7 @@ test("CACHE_TTL_SECONDS — zawiera TTL dla wszystkich typów cache", () => {
   assert.equal(CACHE_TTL_SECONDS.quote, 3 * 60);
   assert.equal(CACHE_TTL_SECONDS.news, 2 * 60 * 60);
   assert.equal(CACHE_TTL_SECONDS.price_history, 12 * 60 * 60);
+  assert.equal(CACHE_TTL_SECONDS.price_intraday, 24 * 60 * 60);
 });
 
 test("CACHE_TTL_SECONDS — wszystkie TTL są dodatnie", () => {
@@ -62,5 +63,23 @@ test("keys.priceHistory — normalizuje ticker", () => {
   assert.equal(
     keys.priceHistory("  tsla  ", "1day", "2026-01-01", "2026-09-19"),
     "history:TSLA:1day:2026-01-01:2026-09-19",
+  );
+});
+
+test("keys.priceIntraday — tworzy prawidłowy klucz", () => {
+  assert.equal(
+    keys.priceIntraday("aapl", "2026-09-15T15:21:00", "2026-09-15T15:36:00"),
+    "intraday:AAPL:2026-09-15T15:21:00:2026-09-15T15:36:00",
+  );
+});
+
+test("keys.priceIntraday — normalizuje ticker", () => {
+  assert.equal(
+    keys.priceIntraday(
+      "  tsla  ",
+      "2026-09-15T15:21:00",
+      "2026-09-15T15:36:00",
+    ),
+    "intraday:TSLA:2026-09-15T15:21:00:2026-09-15T15:36:00",
   );
 });

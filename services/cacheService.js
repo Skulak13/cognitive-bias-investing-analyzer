@@ -14,14 +14,27 @@ import CacheEntry from "../models/CacheEntry.js";
  *
  * price_history:
  *   12 godzin — dzienna historia cen zmienia się znacznie rzadziej.
+ *
+ * price_intraday:
+ *   24 godziny — okno świec 1-minutowych odpowiada JEDNEJ konkretnej,
+ *   już przeszłej chwili (momentowi decyzji danej akcji), a nie "dzisiaj"
+ *   jak price_history. Taka dana z definicji się nie zmienia, więc długi
+ *   TTL głównie chroni przed niepotrzebnym ponownym zapytaniem przy
+ *   powtórzonym quick-checku tej samej akcji, a nie przed nieaktualnością.
  */
 export const CACHE_TTL_SECONDS = Object.freeze({
   quote: 3 * 60,
   news: 2 * 60 * 60,
   price_history: 12 * 60 * 60,
+  price_intraday: 24 * 60 * 60,
 });
 
-const CACHE_TYPES = Object.freeze(["quote", "news", "price_history"]);
+const CACHE_TYPES = Object.freeze([
+  "quote",
+  "news",
+  "price_history",
+  "price_intraday",
+]);
 
 const CACHE_SOURCES = Object.freeze(["finnhub", "twelve_data"]);
 
@@ -64,7 +77,7 @@ function normalizeTicker(ticker) {
 /**
  * Zwraca prawidłowy TTL.
  *
- * @param {"quote"|"news"|"price_history"} type
+ * @param {"quote"|"news"|"price_history"|"price_intraday"} type
  * @param {number|undefined} ttlSeconds
  * @returns {number}
  */
@@ -138,7 +151,7 @@ export const get = async (key) => {
  * @param {any} data
  * @param {number} [ttlSeconds]
  * @param {object} meta
- * @param {"quote"|"news"|"price_history"} meta.type
+ * @param {"quote"|"news"|"price_history"|"price_intraday"} meta.type
  * @param {"finnhub"|"twelve_data"} meta.source
  */
 export const set = async (key, data, ttlSeconds, meta = {}) => {
@@ -154,7 +167,7 @@ export const set = async (key, data, ttlSeconds, meta = {}) => {
 
   if (!CACHE_TYPES.includes(type)) {
     throw new Error(
-      'cacheService.set: type musi być "quote" | "news" | "price_history"',
+      `cacheService.set: type musi być jednym z: "${CACHE_TYPES.join('" | "')}"`,
     );
   }
 
@@ -187,6 +200,10 @@ export const set = async (key, data, ttlSeconds, meta = {}) => {
         upsert: true,
         returnDocument: "after",
         setDefaultsOnInsert: true,
+        // Bez tego walidatory ze schematu (np. enum na `type`) NIE działają
+        // dla findOneAndUpdate — schemat deklarował ograniczenie, którego ta
+        // ścieżka zapisu nie egzekwowała.
+        runValidators: true,
       },
     );
   } catch (error) {
@@ -208,7 +225,7 @@ export const set = async (key, data, ttlSeconds, meta = {}) => {
  *
  * @param {object} options
  * @param {string} options.key
- * @param {"quote"|"news"|"price_history"} options.type
+ * @param {"quote"|"news"|"price_history"|"price_intraday"} options.type
  * @param {"finnhub"|"twelve_data"} options.source
  * @param {Function} options.fetcher
  * @param {number} [options.ttlSeconds]
@@ -350,4 +367,7 @@ export const keys = {
     `history:${normalizeTicker(ticker)}:${interval}:${
       startDate || "none"
     }:${endDate || "none"}`,
+
+  priceIntraday: (ticker, startDateTime, endDateTime) =>
+    `intraday:${normalizeTicker(ticker)}:${startDateTime}:${endDateTime}`,
 };

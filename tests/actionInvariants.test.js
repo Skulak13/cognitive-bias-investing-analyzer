@@ -31,6 +31,12 @@ test("validateStaticQuantity — odrzuca nieznany actionType i NaN", () => {
   assert.match(validateStaticQuantity("open", NaN), /liczbą/);
 });
 
+test("validateStaticQuantity — odrzuca Infinity (Number.isNaN(Infinity) === false, więc samo sprawdzenie NaN je przepuszczało)", () => {
+  assert.match(validateStaticQuantity("open", Infinity), /skończoną/);
+  assert.match(validateStaticQuantity("add", Infinity), /skończoną/);
+  assert.match(validateStaticQuantity("reduce", -Infinity), /skończoną/);
+});
+
 test("buildActionUpdate — add: brak górnego ograniczenia w filtrze", () => {
   const { filter, update } = buildActionUpdate("add", 5, "user1", "pos1");
   assert.deepEqual(update, { $inc: { currentQuantity: 5 } });
@@ -45,11 +51,32 @@ test("buildActionUpdate — reduce: filtr wymaga currentQuantity ŚCIŚLE więks
 });
 
 test("buildActionUpdate — close: filtr wymaga currentQuantity DOKŁADNIE równego, ustawia status closed", () => {
-  const { filter, update } = buildActionUpdate("close", 10, "user1", "pos1");
+  const actionDate = new Date("2026-09-23T15:00:00.000Z");
+  const { filter, update } = buildActionUpdate(
+    "close",
+    10,
+    "user1",
+    "pos1",
+    actionDate,
+  );
   assert.equal(filter.currentQuantity, 10);
   assert.equal(update.$inc.currentQuantity, -10);
   assert.equal(update.$set.status, "closed");
-  assert.ok(update.$set.closedAt instanceof Date);
+  // closedAt MUSI być tym samym momentem co actionDate (decyzja o
+  // zamknięciu), a nie momentem wywołania buildActionUpdate — inaczej
+  // wraca dokładnie ta niespójność, którą ta zmiana miała usunąć.
+  assert.equal(update.$set.closedAt, actionDate);
+});
+
+test("buildActionUpdate — close: rzuca, gdy actionDate brakuje albo jest niepoprawne", () => {
+  assert.throws(
+    () => buildActionUpdate("close", 10, "user1", "pos1"),
+    /wymaga poprawnego actionDate/,
+  );
+  assert.throws(
+    () => buildActionUpdate("close", 10, "user1", "pos1", new Date("nie-data")),
+    /wymaga poprawnego actionDate/,
+  );
 });
 
 test("buildActionUpdate — hold: nie rusza currentQuantity", () => {
