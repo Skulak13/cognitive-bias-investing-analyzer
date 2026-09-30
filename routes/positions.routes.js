@@ -6,6 +6,7 @@ import {
   getPositions,
   getPositionById,
   softDeletePosition,
+  updateActionReasoning,
 } from "../controllers/positionsController.js";
 
 const router = Router();
@@ -17,6 +18,7 @@ router.post("/", createPosition);
 router.get("/", getPositions);
 router.get("/:id", getPositionById);
 router.post("/:id/actions", addAction);
+router.patch("/:id/actions/:actionId/reasoning", updateActionReasoning);
 router.delete("/:id", softDeletePosition);
 
 export default router;
