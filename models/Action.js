@@ -6,6 +6,10 @@ const earlyAiCheckSchema = new mongoose.Schema(
     analyzedAt: { type: Date, required: true },
     summary: { type: String, required: true },
     possibleBiases: [{ type: String }], // uproszczona lista (tylko nazwy)
+    // Oryginalne nazwy biasów spoza taksonomii zwróconych przez AI. Pole
+    // wyliczane WYŁĄCZNIE przez utils/validateAiResponse.js (nigdy od
+    // Gemini); nie zmienia taksonomii. Bez limitów długości (decyzja D5).
+    proposedBiasLabels: { type: [String], default: [] },
     limitations: { type: String, default: "" },
     aiModelVersion: { type: String, required: true },
     promptVersion: { type: String },

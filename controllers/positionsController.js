@@ -469,7 +469,10 @@ export const addAction = async (req, res) => {
  */
 export const updateActionReasoning = async (req, res) => {
   const { id: positionId, actionId } = req.params;
-  const { reasoning, expectedOutcome } = req.body;
+  // W Express 5 req.body jest `undefined`, gdy żądanie nie ma ciała ani
+  // nagłówka Content-Type: application/json. Bez `?? {}` destrukturyzacja
+  // rzuciłaby TypeError (500) zamiast czytelnego 400 poniżej.
+  const { reasoning, expectedOutcome } = req.body ?? {};
 
   const reasoningProvided = typeof reasoning !== "undefined";
   const expectedOutcomeProvided = typeof expectedOutcome !== "undefined";
