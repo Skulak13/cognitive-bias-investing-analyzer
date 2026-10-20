@@ -1,6 +1,8 @@
 import "dotenv/config";
 import connectDB from "./config/db.js";
 import app from "./app.js";
+import { describeStartupConfig } from "./config/aiConfig.js";
+import { aiAnalysisService } from "./services/aiAnalysisService.js";
 
 // Start serwera
 const startServer = async () => {
@@ -16,13 +18,44 @@ const startServer = async () => {
     process.exit(1);
   }
 
+  // Stan AI i rejestracji w logu startowym (bez sekretów). Brak GEMINI_API_KEY
+  // lub AI_ENABLED NIE blokuje startu — AI jest wtedy po prostu wyłączone.
+  const startup = describeStartupConfig();
+  startup.lines.forEach((line) => console.log(line));
+  startup.warningLines.forEach((line) => console.warn(line));
+
   try {
     await connectDB();
 
+    // Odzyskiwanie po restarcie (Etap 8.6.4): po połączeniu z bazą, PRZED listen.
+    // Zakłada JEDNĄ instancję serwera — żadna wcześniejsza analiza nie może już
+    // trwać, więc każde `pending` zamieniamy na `failed`/`server_restart`.
+    // Przy wielu instancjach tej metody nie wolno użyć bez zmiany (plan 6.3, sekcja 9).
+    // Błąd odzyskiwania nie zatrzymuje serwera — próbuje dalej przegląd cykliczny.
+    try {
+      const recovered = await aiAnalysisService.recoverAfterRestart();
+      console.log(
+        `Odzyskiwanie analiz AI: przerwane → failed: ${recovered.failedPending}, ` +
+          `przywrócone znaczniki analizy końcowej: ${recovered.restoredMarkers}`,
+      );
+    } catch (error) {
+      // Przegląd cykliczny ponawia odzyskiwanie startowe, aż się powiedzie.
+      console.error(
+        "Odzyskiwanie analiz AI po restarcie nie powiodło się (zostanie ponowione):",
+        error.message,
+      );
+    }
+
     const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Serwer działa na porcie ${PORT}`);
     });
+
+    // Lekki przegląd cykliczny (timer z unref — nie blokuje zamknięcia procesu).
+    // Bez podłączonego executora (do czasu orkiestratora z 8.9) przegląd tylko
+    // zamyka przeterminowane `pending` i niczego nie uruchamia.
+    const recovery = aiAnalysisService.startRecoveryScheduler();
+    server.on("close", () => recovery.stop());
   } catch (error) {
     console.error("Nie udało się uruchomić serwera:", error.message);
     process.exit(1);

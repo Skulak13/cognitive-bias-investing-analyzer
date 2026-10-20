@@ -19,24 +19,33 @@ export const notFound = (req, res, next) => {
  *     throw err;
  *   }
  */
+// Wysyła odpowiedź błędu. Kod aplikacyjny (np. "ai_disabled") pochodzi z odrębnego
+// pola `appCode`, NIE z `err.code` (to pole zajmuje m.in. Mongo: 11000). Dodajemy go
+// we WSZYSTKICH gałęziach; brak kodu = dotychczasowy kształt { error }.
+const send = (res, err, status, message) => {
+  const body = { error: message };
+  if (typeof err.appCode === "string" && err.appCode.length > 0) {
+    body.code = err.appCode;
+  }
+  return res.status(status).json(body);
+};
+
 export const errorHandler = (err, req, res, next) => {
   // Błędy walidacji Mongoose (np. brak wymaganego pola, wartość spoza enuma)
   if (err.name === "ValidationError") {
     const messages = Object.values(err.errors).map((e) => e.message);
-    return res.status(400).json({ error: messages.join(", ") });
+    return send(res, err, 400, messages.join(", "));
   }
 
   // Nieprawidłowy format ObjectId w parametrze trasy (np. /api/positions/abc)
   if (err.name === "CastError") {
-    return res.status(400).json({ error: "Nieprawidłowy format ID" });
+    return send(res, err, 400, "Nieprawidłowy format ID");
   }
 
   // Naruszenie unikalności pola (np. rejestracja na zajęty e-mail)
   if (err.code === 11000) {
     const field = Object.keys(err.keyPattern || {})[0] || "pole";
-    return res
-      .status(409)
-      .json({ error: `Wartość pola "${field}" jest już zajęta` });
+    return send(res, err, 409, `Wartość pola "${field}" jest już zajęta`);
   }
 
   // Błędy z jawnie ustawionym statusem (patrz przykład w komentarzu wyżej)
@@ -48,7 +57,10 @@ export const errorHandler = (err, req, res, next) => {
     console.error("Nieobsłużony błąd:", err);
   }
 
-  res.status(status).json({
-    error: status === 500 ? "Wystąpił błąd serwera" : err.message,
-  });
+  send(
+    res,
+    err,
+    status,
+    status === 500 ? "Wystąpił błąd serwera" : err.message,
+  );
 };
