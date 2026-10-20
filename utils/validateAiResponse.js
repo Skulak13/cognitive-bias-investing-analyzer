@@ -63,6 +63,12 @@ const CONFIDENCE_VALUES = Object.freeze(["low", "medium", "high"]);
  * Pola, które ustawia backend — Gemini nie może ich dostarczać ani
  * nadpisywać (lista z sekcji 11 planu). Backend dopisze je dopiero po
  * pozytywnej walidacji (Etap 8).
+ *
+ * Etap 8.7.5: lista rozszerzona o identyfikatory uruchomienia analizy
+ * (`analysisRunId`, `runStartedAt` — wpis `analyses[]` i `earlyAiCheck`;
+ * `lastAnalysisRunId` — rezerwacja na `Position`). To ochrona dodatkowa:
+ * pole nieznane i tak byłoby usunięte jako `unknown_field_removed`, ale pole
+ * backendu ma dostać jednoznaczny kod `backend_field_removed`.
  */
 export const BACKEND_OWNED_FIELDS = Object.freeze([
   "analyzedAt",
@@ -76,6 +82,9 @@ export const BACKEND_OWNED_FIELDS = Object.freeze([
   "positionId",
   "createdAt",
   "updatedAt",
+  "analysisRunId",
+  "runStartedAt",
+  "lastAnalysisRunId",
 ]);
 
 /**

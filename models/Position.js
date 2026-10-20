@@ -35,11 +35,14 @@ const aiAnalysisSchema = new mongoose.Schema(
       newsHighlights: { type: mongoose.Schema.Types.Mixed },
       fetchedAt: { type: Date },
     },
-    // Niemutowalna migawka akcji + reasoning w chwili wykonania analizy
-    inputSnapshot: {
-      actions: { type: mongoose.Schema.Types.Mixed },
-      capturedAt: { type: Date },
-    },
+    // Identyfikator uruchomienia analizy (Etap 8, 6.3) — łączy wpis z rekordami
+    // AiUsageLog i z rezerwacją na Position (lastAnalysisRunId).
+    analysisRunId: { type: String },
+    // Niemutowalna migawka danych użytych w analizie. Mixed, bo istnieją dwa
+    // kształty (oba muszą się wczytywać i zapisywać bez zmian):
+    //   stary (Etap 2–7): { actions, capturedAt }
+    //   nowy  (Etap 8, 6.6): { modelInput, meta, capturedAt }
+    inputSnapshot: { type: mongoose.Schema.Types.Mixed },
     summary: { type: String, required: true },
     observedPatterns: [{ type: String }],
     possibleBiases: [possibleBiasSchema],
@@ -115,8 +118,24 @@ const positionSchema = new mongoose.Schema(
     },
     lastAnalysisStatus: {
       type: String,
-      enum: ["pending", "success", "failed", null],
+      enum: ["pending", "success", "failed", "skipped", null],
       default: null,
+    },
+    // Etap 8 (6.12) — pola pomocnicze analizy; wszystkie opcjonalne, więc
+    // istniejące dokumenty pozostają poprawne bez migracji.
+    lastAnalysisReason: { type: String, default: null },
+    lastAnalysisRunId: { type: String, default: null },
+    lastAnalysisStartedAt: { type: Date, default: null },
+    // Trwałe żądanie analizy końcowej po `close` (D8-27, 6.3.1).
+    finalAnalysisRequestedAt: { type: Date, default: null },
+    finalAnalysisAttempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+      validate: {
+        validator: Number.isInteger,
+        message: "{PATH} musi być liczbą całkowitą",
+      },
     },
     // Soft-delete
     deletedAt: {

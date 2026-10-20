@@ -13,6 +13,11 @@ const earlyAiCheckSchema = new mongoose.Schema(
     limitations: { type: String, default: "" },
     aiModelVersion: { type: String, required: true },
     promptVersion: { type: String },
+    // Etap 8 (6.12) — opcjonalne; starsze wpisy ich nie mają. Bez
+    // marketContextSnapshot (C14): dane rynkowe są w inputSnapshot.modelInput.
+    analysisRunId: { type: String },
+    runStartedAt: { type: Date },
+    inputSnapshot: { type: mongoose.Schema.Types.Mixed }, // { modelInput, meta, capturedAt }
   },
   { _id: false },
 );

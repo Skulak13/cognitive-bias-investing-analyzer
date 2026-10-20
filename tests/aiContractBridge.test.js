@@ -146,6 +146,37 @@ function storedAnalysis(position) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Etap 8.7.5 — identyfikatory uruchomienia należą do backendu
+ * ------------------------------------------------------------------ */
+
+test("most (8.7.5) — analysisRunId i runStartedAt podane przez model nie trafiają do dokumentu; zapisuje się wartość backendu", () => {
+  const raw = validFull({
+    analysisRunId: "podrobione-przez-model",
+    runStartedAt: "2020-01-01T00:00:00.000Z",
+    lastAnalysisRunId: "podrobione-przez-model",
+  });
+
+  const result = validateAiResponse(raw, FULL);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.warnings.map((w) => w.code),
+    ["backend_field_removed", "backend_field_removed", "backend_field_removed"],
+  );
+
+  // backend dopisuje WŁASNY identyfikator uruchomienia po walidacji
+  const position = buildPosition(
+    toAnalysis(result.value, {
+      ...backendMetadata(),
+      analysisRunId: "run-backendu-1",
+    }),
+  );
+
+  assert.equal(position.validateSync(), undefined);
+  assert.equal(storedAnalysis(position).analysisRunId, "run-backendu-1");
+});
+
+/* ------------------------------------------------------------------ *
  * Zgodność wyniku walidatora z modelem Position
  * ------------------------------------------------------------------ */
 

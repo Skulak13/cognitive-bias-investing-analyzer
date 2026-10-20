@@ -1,14 +1,13 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import { appError } from "../utils/appError.js";
+import { getAiConfig, isRegistrationClosed } from "../config/aiConfig.js";
 
 const SALT_ROUNDS = 10;
 
-function fail(status, message) {
-  const err = new Error(message);
-  err.status = status;
-  return err;
-}
+// Błąd z kodem HTTP i opcjonalnym kodem aplikacyjnym (patrz utils/appError.js).
+const fail = appError;
 
 function signToken(user) {
   return jwt.sign(
@@ -27,6 +26,16 @@ function signToken(user) {
  * zamieni to na czytelne 400.
  */
 export const register = async (req, res) => {
+  // Zamknięcie rejestracji (D8-04) sprawdzamy NA POCZĄTKU — przed walidacją
+  // i przed kosztownym bcrypt.hash. Logowanie (login) tego nie dotyczy.
+  if (isRegistrationClosed()) {
+    throw fail(
+      403,
+      "Rejestracja nowych kont jest obecnie zamknięta",
+      "registration_closed",
+    );
+  }
+
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -99,18 +108,47 @@ export const login = async (req, res) => {
 };
 
 /**
- * POST /api/auth/accept-disclaimer
- * JWT. Zapisuje disclaimerAcceptedAt — jeden z warunków bramki AI
- * (Etap 8, middleware/ensureAiAccessible.js).
+ * POST /api/auth/accept-disclaimer   body: { version: "<wersja wyświetlonego tekstu>" }
+ * JWT. Zapisuje disclaimerAcceptedAt RAZEM z wersją tekstu zgody (Etap 8.5.2,
+ * D8-16) — warunek bramki AI (middleware/ensureAiAccessible.js).
+ *
+ * Wersja jest wymagana i musi być DOKŁADNIE równa aktualnej (AI_CONSENT_VERSION,
+ * domyślnie "1"): zapisujemy to, co użytkownik faktycznie zobaczył, a nie
+ * wersję "domyślną" wybraną po cichu przez serwer. Zgoda złożona dla
+ * nieaktualnego tekstu nie jest zapisywana. Ponowna akceptacja nadpisuje
+ * poprzednią (tak odnawia się zgodę po zmianie wersji tekstu).
  */
 export const acceptDisclaimer = async (req, res) => {
+  // Express 5: req.body jest undefined, gdy żądanie nie ma ciała JSON.
+  const { version } = req.body ?? {};
+
+  if (typeof version !== "string" || version === "") {
+    throw fail(
+      400,
+      "Wymagana jest wersja akceptowanego tekstu (version)",
+      "consent_version_required",
+    );
+  }
+
+  const currentVersion = getAiConfig().consentVersion;
+  if (version !== currentVersion) {
+    throw fail(
+      400,
+      `Nieaktualna wersja tekstu zgody. Aktualna wersja: "${currentVersion}"`,
+      "consent_version_unknown",
+    );
+  }
+
   const user = await User.findByIdAndUpdate(
     req.userId,
-    { $set: { disclaimerAcceptedAt: new Date() } },
-    { new: true },
+    { $set: { disclaimerAcceptedAt: new Date(), disclaimerVersion: version } },
+    { returnDocument: "after" },
   );
 
   if (!user) throw fail(404, "Nie znaleziono użytkownika");
 
-  res.json({ disclaimerAcceptedAt: user.disclaimerAcceptedAt });
+  res.json({
+    disclaimerAcceptedAt: user.disclaimerAcceptedAt,
+    disclaimerVersion: user.disclaimerVersion,
+  });
 };

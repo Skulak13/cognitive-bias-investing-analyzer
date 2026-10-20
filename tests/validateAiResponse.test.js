@@ -1403,7 +1403,8 @@ test("krok 5 — wpisy bez błędów zachowują kolejność pól: bias, proposed
  * ================================================================== */
 
 // Lista z sekcji 11 planu v1.1 (zapisana niezależnie od kodu, żeby test
-// wykrył jej przypadkową zmianę).
+// wykrył jej przypadkową zmianę) + 3 nazwy dopisane w Etapie 8.7.5
+// (plan Etapu 8, sekcja 6.4 i zadanie 8.7.5): identyfikatory uruchomienia.
 const PLAN_BACKEND_FIELDS = [
   "analyzedAt",
   "analysisType",
@@ -1416,6 +1417,10 @@ const PLAN_BACKEND_FIELDS = [
   "positionId",
   "createdAt",
   "updatedAt",
+  // Etap 8.7.5
+  "analysisRunId",
+  "runStartedAt",
+  "lastAnalysisRunId",
 ];
 
 const PLAN_DERIVED_FIELDS = ["proposedLabel", "proposedBiasLabels"];
@@ -1580,6 +1585,55 @@ test("pola backendu — każde z listy planu we wpisie possibleBiases[] jest usu
       field,
     );
   }
+});
+
+test("pola backendu (8.7.5) — analysisRunId, runStartedAt i lastAnalysisRunId od modelu są usuwane z backend_field_removed (nie unknown_field_removed), w obu rodzajach i w tekście JSON", () => {
+  const RUN_FIELDS = ["analysisRunId", "runStartedAt", "lastAnalysisRunId"];
+
+  for (const field of RUN_FIELDS) {
+    // pełna analiza — poziom główny, jako obiekt i jako tekst JSON
+    const full = validFull();
+    full[field] = "podrobione-uruchomienie";
+
+    for (const input of [full, JSON.stringify(full)]) {
+      const result = run(input);
+
+      assertAccepted(result);
+      assert.equal(Object.hasOwn(result.value, field), false, field);
+      assert.deepEqual(
+        warningPairs(result.warnings),
+        [`${field} | backend_field_removed`],
+        field,
+      );
+    }
+
+    // quick-check
+    const quick = validQuick();
+    quick[field] = "podrobione-uruchomienie";
+    const quickResult = runQuick(quick);
+
+    assertAccepted(quickResult);
+    assert.equal(Object.hasOwn(quickResult.value, field), false, field);
+    assert.deepEqual(
+      warningPairs(quickResult.warnings),
+      [`${field} | backend_field_removed`],
+      field,
+    );
+  }
+
+  // wszystkie trzy naraz — jeden kod na każde pole, nic nie trafia do wyniku
+  const all = validFull();
+  for (const field of RUN_FIELDS) all[field] = { zagniezdzone: true };
+
+  const result = run(all);
+
+  assertAccepted(result);
+  assert.deepEqual(Object.keys(result.value).sort(), FULL_TOP_KEYS);
+  assert.deepEqual(warningPairs(result.warnings), [
+    "analysisRunId | backend_field_removed",
+    "lastAnalysisRunId | backend_field_removed",
+    "runStartedAt | backend_field_removed",
+  ]);
 });
 
 test("pola backendu — pole backendu i pole obce w jednej odpowiedzi dostają różne kody ostrzeżeń", () => {

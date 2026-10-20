@@ -42,6 +42,13 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Wersja tekstu zgody, którą użytkownik zaakceptował (Etap 8, 6.12).
+    // null = zgoda sprzed wprowadzenia wersji → bramka AI (8.5) uzna ją za
+    // nieważną i poprosi o ponowną akceptację (zamierzone).
+    disclaimerVersion: {
+      type: String,
+      default: null,
+    },
     aiUsage: {
       type: aiUsageSchema,
       default: () => ({}),
